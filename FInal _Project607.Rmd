@@ -1,0 +1,160 @@
+---
+title: "Final Project 607"
+author: "Andreina Arias"
+date: "2024-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(stats)
+library(httr)
+library(jsonlite)
+library(ggplot2)
+```
+
+## Introduction
+
+**In 2020 Covid-19 seemed to be one of the leading causes of death and it wanted to see if there was a difference in the leading causes of death for NYC and the United States of America (USA), to see if the concerning diseases in NYC were also main concerns to the whole USA. Is there a difference in death rate for NYC and the USA, since is NYC part of the USA. I used data from NYC open data on the leading causes of death in NY since 2007 "https://data.cityofnewyork.us/Health/New-York-City-Leading-Causes-of-Death/jb7j-dtam/data_preview", which I loaded into GitHub to obtain the raw data of the CSV to us in R. For the data on the leading cause of death in the USA I'll use data from World Health Organization (WHO) "https://www.who.int/data/gho/data/themes/mortality-and-global-health-estimates/ghe-leading-causes-of-death", which I will using API (using jsonlite) to extract the data from the data link"https://xmart-api-public.who.int/DEX_CMS/GHE_FULL?$filter=FLAG_RANKABLE%20eq%201%20and%20DIM_COUNTRY_CODE%20eq%20%27USA%27%20and%20DIM_SEX_CODE%20eq%20%27MALE%27%20and%20DIM_AGEGROUP_CODE%20eq%20%27TOTAL%27%20and%20DIM_YEAR_CODE%20eq%202020&$orderBy=VAL_DTHS_RATE100K_NUMERIC%20desc&$select=DIM_GHECAUSE_CODE,DIM_GHECAUSE_TITLE,VAL_DALY_RATE100K_NUMERIC,VAL_DTHS_RATE100K_NUMERIC&$top=10". This observational study can be helpful seeing which interventions NYC would need, such as in 2020 NYC was black sheep state that everyone wanted to avoid.**
+
+
+NYC leading cause of death data from NYC open data was uploaded into github to load the csv file into R for analysis.
+
+```{r tidy DF1}
+DF1<-read.csv('https://raw.githubusercontent.com/Andreina-A/Project2_Data607/refs/heads/main/New_York_City_Leading_Causes_of_Death_20241013.csv', na.strings=" ")# na.string will convert all empty data into '.'
+
+#Rename to reflect NYC data when joined with USA data and select the data needed
+DF1<-DF1 %>% rename("Leading_cause"=Leading.Cause, "Death_rate_NYC"=Death.Rate)%>%
+  filter(Year == 2020)%>% #Only looking at data from 2020
+  select(Year, Leading_cause, Death_rate_NYC)
+
+
+#Renamed Variables in leading cause of death to Match leading cause in USA data, also renamed diseases with long text
+DF1 <- DF1 %>%
+  mutate(Leading_cause = recode(Leading_cause,
+                                  "Diseases of Heart (I00-I09, I11, I13, I20-I51)"="All heart diseases", "Alzheimer's Disease (G30)"="Alzheimer disease and other dementias", "Cerebrovascular Disease (Stroke: I60-I69)"="Stroke","Covid-19"= "COVID-19", "Chronic Lower Respiratory Diseases (J40-J47)"="Chronic obstructive pulmonary disease","Malignant Neoplasms (Cancer: C00-C97)"="Trachea, bronchus, lung cancers", 	
+"Accidents Except Drug Posioning (V01-X39, X43, X45-X59, Y85-Y86)"="Accident", "Mental and Behavioral Disorders due to Accidental Poisoning and Other Psychoactive Substance Use (F11-F16, F18-F19, X40-X42, X44)"="Drug use disorders", "Intentional Self-Harm (Suicide: U03, X60-X84, Y87.0)"="Self-harm"))
+
+DF1$Death_rate_NYC<-as.numeric(DF1$Death_rate_NYC) #made values in death numerical for further analysis
+
+DF1 <- na.omit(DF1) #removed rows with missing values.
+
+#view data
+head(DF1)
+```
+
+
+Used aggregate function to group all the leading causes of death in NYC and sum their death rate, also created a column for source to differentiate data from the USA and NYC to use in facet wrap (visual).
+
+```{r}
+DF1 <- aggregate(Death_rate_NYC ~ Leading_cause, data = DF1, sum)%>%
+  mutate(Source = "NYC") #Source created to use in facet wrap function
+
+head(DF1)
+```
+
+Loaded data on the USA from WHO by connecting to API URL, to obtain json file.
+
+```{r}
+# Load API URL
+url <- "https://xmart-api-public.who.int/DEX_CMS/GHE_FULL?$filter=FLAG_RANKABLE%20eq%201%20and%20DIM_COUNTRY_CODE%20eq%20%27USA%27%20and%20DIM_SEX_CODE%20eq%20%27MALE%27%20and%20DIM_AGEGROUP_CODE%20eq%20%27TOTAL%27%20and%20DIM_YEAR_CODE%20eq%202020&$orderBy=VAL_DTHS_RATE100K_NUMERIC%20desc&$select=DIM_GHECAUSE_CODE,DIM_GHECAUSE_TITLE,VAL_DALY_RATE100K_NUMERIC,VAL_DTHS_RATE100K_NUMERIC&$top=10"
+
+# Use GET function to request to the API
+response <- GET(url)
+
+# Check if the request was successful (HTTP status 200)
+if (status_code(response) == 200) {
+  # obtain the JSON content
+  data <- fromJSON(content(response, "text"))
+  
+  # Checked structure to confirm it is a data frame
+  str(data)
+  
+  # Extracted and viewed the relevant part of the data (e.g., death statistics)
+  DF2<- data$value  # Assuming 'value' holds the desired data
+  head(DF2)
+} else {
+  print("Request failed with status code: ")
+  print(status_code(response))
+}
+
+```
+
+Cleaned the WHO data by renaming the colums to merge with the NYC data, created a source column for use in the facet wrap function.
+
+```{r}
+# Renamed and Extracted relevant columns from WHO data
+DF2 <- DF2 %>% rename("Leading_cause"=DIM_GHECAUSE_TITLE, "Death_rate_USA"=VAL_DTHS_RATE100K_NUMERIC)%>%
+  select(Leading_cause, Death_rate_USA)%>%
+  mutate(Source = "USA") #Source created to use in facet wrap function
+
+#View USA data
+head(DF2)
+```
+
+**Merged NYC leading cause of death data with USA leading cause of death. Since the USA data only had 10 diseases, there will be NA values wherever USA didn't have a disease listed compared to NYC which more than 10 diseases listed, I removed NA values to only compare the leading causes.**
+\
+```{r}
+Merged_data <- left_join(DF1, DF2, by = "Leading_cause")
+```
+
+```{r}
+# Merged WHO and NYC data
+Merged_data <- bind_rows(DF1, DF2) #merge by rows to cause a NA for th
+
+
+# View merged data
+Merged_data
+```
+### Comparison
+
+Used select function to view the comparsion on the leading cause of death for the USA and NYC
+
+```{r}
+# View of the comparison
+Merged_data %>%
+  select(Leading_cause, Death_rate_NYC, Death_rate_USA, Source) %>%
+  arrange(desc(Death_rate_USA),desc(Death_rate_NYC)) #arranged descending order for the USA and NYC
+```
+
+
+## Visual
+
+Used facet wrap function to make a visual comparsion of the leading causes of death of NYC and the USA.
+
+```{r}
+ggplot(Merged_data, aes(x = reorder(Leading_cause, -Death_rate_NYC), 
+                        y = ifelse(Source == "NYC", Death_rate_NYC, Death_rate_USA),
+                        fill = Source)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ Source, scales = "free_y") + #free_y to have height that will be proportional to the length of the y scale
+  labs(title = "Comparison of Leading Causes of Death: NYC vs USA (2020)",
+       x = "Cause of Death",
+       y = "Death Rate (per 100,000)",
+       fill = "Location") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + #rotated labels on x-axis
+  scale_fill_manual(values = c("NYC" = "skyblue", "USA" = "orange"))
+```
+
+
+
+```{r Stats}
+t_test_result <- t.test(Merged_data$Death_rate_NYC, Merged_data$Death_Rate_USA, alternative = "two.sided")
+t_test_result
+```
+Null Hypothesis: No significance difference in the death rate for NYC compared to the USA
+Alternative Hypothesis: There is a difference in the death rates for NYC compared to the USA. Based on the t- test the P value is 0.01 which is less than .05 meaning there is a signicant difference in the death rate for NYC and the USA.
+
+## Conclusion
+
+The comparison on the leading cause in 2020 within NYC and the USA were visually demonstrated, using the facet wrap function. The primary leading cause of death in the USA was heart disease and Covid-19 came in second, while in NYC the primary leading cause of death was Covid-19 and heart disease came in second. I wasn't surprised to see that NYC's primary cause of death being Covid-19 in 2020 because during the pandemic everyone was afraid to live in NYC and many moved to different states within the USA, Rhode island didn't even want visitors from NYC. Using the p value I was able to come with the conclusion that there is a significant difference in the death rate for the USA and NYC. Although I noticed there was a difference in death rate value for NYC and the USA, NYC seemed to have high values this could be because of the different denominator being used to calculate the death rate; NYC could have been calculated from the city-level while the USA was calculated based on the entire United Stated including NYC which would use a different way to calculate the death rate compare to NYC. Overall I would say it's important to see that main leading cause of death is heart disease in NYC and the USA and I feel it's something we study consider to find presentation. If I were to do further assessment I would compare the leading cause of death of the USA to the world and see if there is a country with a lower death rate for heart disease and learn about their lifestyle to possibly decrease the death in the USA by heart disease.
+
+
+
+## Reference
+
+Data source for NYC- New York City Department of Health and Mental Hygiene. (n.d.). New York City leading causes of death. NYC Open Data. Retrieved December 10, 2024, from https://data.cityofnewyork.us/Health/New-York-City-Leading-Causes-of-Death/jb7j-dtam/data_preview
+
+Data source for USA- World Health Organization. (n.d.). Leading causes of death. Global Health Estimates. World Health Organization. Retrieved December 10, 2024, from https://www.who.int/data/gho/data/themes/mortality-and-global-health-estimates/ghe-leading-causes-of-death.
